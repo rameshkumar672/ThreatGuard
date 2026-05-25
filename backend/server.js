@@ -179,7 +179,7 @@ app.use((err, req, res, next) => {
 });
 
 // ================= SERVER =================
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 7860;
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server running on port ${PORT}`);
