@@ -55,6 +55,26 @@ const WebsiteUserSchema = new mongoose.Schema(
       type: String,
       default: "None",
     },
+    lastIp: {
+      type: String,
+      default: null,
+    },
+    lastCountry: {
+      type: String,
+      default: null,
+    },
+    lastCity: {
+      type: String,
+      default: null,
+    },
+    lastDeviceFingerprint: {
+      type: String,
+      default: null,
+    },
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    }
   },
   { timestamps: true }
 );

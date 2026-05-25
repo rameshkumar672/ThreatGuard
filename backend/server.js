@@ -74,14 +74,19 @@
 // // ================= SERVER =================
 // const PORT = process.env.PORT || 5000;
 
-// server.listen(PORT, () => {
+// // server.listen(PORT, () => {
+// //   console.log(`🚀 Server running on port ${PORT}`);
+// // });
+// server.listen(PORT, "0.0.0.0", () => {
 //   console.log(`🚀 Server running on port ${PORT}`);
 // });
 
 const express = require("express");
 require("dotenv").config();
 const cors = require("cors");
-const connectDB = require("./config/db");
+
+// FIX: connectDB function nahi hai, destructure connections import karo
+const { tgConnection, slConnection } = require("./config/db");
 
 const http = require("http");
 const { Server } = require("socket.io");
@@ -91,27 +96,33 @@ const securityRoutes = require("./routes/securityRoutes");
 const websiteRoutes = require("./routes/websiteRoutes");
 const protectionRoutes = require("./routes/protectionRoutes");
 const reportRoutes = require("./routes/reportRoutes");
-const threatguardRoutes = require("./routes/threatguardRoutes");
 
 const checkBlockedIP = require("./middleware/checkBlockedIP");
 const locationMiddleware = require("./middleware/locationMiddleware");
 
 const app = express();
 
-// DB Connect
-connectDB();
+// ================= CORS =================
+const corsOptions = {
+  origin: "http://localhost:5173",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  credentials: true
+};
 
-// Middlewares
-app.use(cors());
+// Apply CORS globally
+app.use(cors(corsOptions));
+
 app.use(express.json());
 
-// HTTP server
+// ================= HTTP SERVER =================
 const server = http.createServer(app);
 
-// Socket.IO
+// ================= SOCKET.IO =================
 const io = new Server(server, {
   cors: {
-    origin: "*"
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
@@ -122,9 +133,7 @@ io.on("connection", (socket) => {
 
   socket.on("join_user_room", (userId) => {
     socket.join(userId);
-    console.log(
-      `👤 Dashboard connected to User Room: ${userId}`
-    );
+    console.log(`👤 Dashboard connected to User Room: ${userId}`);
   });
 
   socket.on("disconnect", () => {
@@ -132,13 +141,21 @@ io.on("connection", (socket) => {
   });
 });
 
-// Routes
+// ================= ROUTES =================
+const threatguardRoutes = require("./routes/threatguardRoutes");
+
+// ThreatGuard Owner Auth
 app.use("/api/threatguard", threatguardRoutes);
+
+// SmartLogin Auth
 app.use("/api/auth", authRoutes);
+
+// Dashboard APIs
 app.use("/api/security", securityRoutes);
 app.use("/api/websites", websiteRoutes);
 app.use("/api/reports", reportRoutes);
 
+// Protection API
 app.use(
   "/api/protect",
   locationMiddleware,
@@ -146,21 +163,24 @@ app.use(
   protectionRoutes
 );
 
-// Health check
+// ================= TEST ROUTE =================
 app.get("/", (req, res) => {
-  res.send("ThreatGuard Backend is running 🚀");
+  res.status(200).send("ThreatGuard Backend is running 🚀");
 });
 
+// ================= GLOBAL ERROR HANDLER =================
+app.use((err, req, res, next) => {
+  console.error("🔥 Unhandled Server Error:", err);
+  res.status(err.status || 500).json({ 
+    success: false, 
+    message: "Internal Server Error", 
+    error: err.message 
+  });
+});
+
+// ================= SERVER =================
 const PORT = process.env.PORT || 5000;
 
-// Local run
-if (process.env.NODE_ENV !== "production") {
-  server.listen(PORT, () => {
-    console.log(
-      `🚀 Server running on port ${PORT}`
-    );
-  });
-}
-
-// Export for Vercel
-module.exports = app;
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});

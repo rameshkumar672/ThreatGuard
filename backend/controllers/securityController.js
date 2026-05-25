@@ -3,6 +3,8 @@ const AttackLog = require("../models/smartlogin/AttackLog");
 const BlockedIP = require("../models/smartlogin/BlockedIP");
 const Website = require("../models/threatguard/Website");
 const WebsiteUser = require("../models/smartlogin/WebsiteUser");
+const TrustedDevice = require("../models/smartlogin/TrustedDevice");
+const jwt = require("jsonwebtoken");
 
 // ================= HELPER =================
 const getUserWebsiteIds = async (userId) => {
@@ -45,41 +47,65 @@ exports.itWasMe = async (req, res) => {
 exports.blockIP = async (req, res) => {
   try {
     const { token } = req.query;
+    const { ip: bodyIp, websiteId: bodyWebsiteId } = req.body;
+    
+    let targetIp, targetWebsiteId, ownerId;
 
-    const action = await EmailAction.findOne({ token });
+    if (token) {
+      const action = await EmailAction.findOne({ token });
+      if (!action) return res.send("❌ Invalid or expired link.");
+      targetIp = action.ip;
+      targetWebsiteId = action.websiteId;
+      ownerId = action.ownerId;
+      await EmailAction.deleteOne({ token });
+    } else {
+      // Dashboard manual block
+      targetIp = bodyIp || req.query.ip;
+      targetWebsiteId = bodyWebsiteId || req.query.websiteId;
+      
+      if (!targetIp || !targetWebsiteId) {
+        return res.status(400).json({ message: "IP and Website ID are required." });
+      }
 
-    if (!action) {
-      return res.send("❌ Invalid or expired link.");
+      const website = await Website.findById(targetWebsiteId);
+      ownerId = website?.ownerId;
     }
+
+    console.log("Blocking IP:", targetIp);
 
     const blockedUntil = new Date(
       Date.now() + 24 * 60 * 60 * 1000
     );
 
     await BlockedIP.create({
-      ownerId: action.ownerId,
-      websiteId: action.websiteId,
-      ip: action.ip,
+      ownerId,
+      websiteId: targetWebsiteId,
+      ip: targetIp,
       reason: "Manual block",
       blockedUntil
     });
 
     await AttackLog.updateMany(
-      {
-        email: action.email
-      },
-      {
-        actionTaken: "ip-blocked"
-      }
+      { ip: targetIp, websiteId: targetWebsiteId },
+      { actionTaken: "ip-blocked" }
     );
 
-    await EmailAction.deleteOne({ token });
+    // Emit socket event for instant UI refresh
+    const io = req.app.get("io");
+    if (io && ownerId) {
+      console.log("Emitting dashboard_refresh to owner:", ownerId);
+      io.to(ownerId.toString()).emit("dashboard_refresh");
+    }
 
-    res.send("🚫 IP blocked for 24 hours.");
+    if (token) {
+      res.send("🚫 IP blocked for 24 hours.");
+    } else {
+      res.json({ message: "IP blocked successfully" });
+    }
 
   } catch (err) {
-    console.error(err);
-    res.send("❌ Server error.");
+    console.error("Block IP error:", err);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
@@ -89,17 +115,23 @@ exports.getAttackMap = async (req, res) => {
     const websiteIds = await getUserWebsiteIds(req.user.id);
 
     const attacks = await AttackLog.find({
-      websiteId: { $in: websiteIds }
+      websiteId: { $in: websiteIds },
+      "location.latitude": { $ne: 0 },
+      "location.longitude": { $ne: 0 }
     })
       .sort({ createdAt: -1 })
       .limit(100);
 
     const mapData = attacks.map((attack) => ({
+      _id: attack._id,
       ip: attack.ip,
       country: attack.location?.country || "Unknown",
+      state: attack.location?.state || "Unknown",
       city: attack.location?.city || "Unknown",
       latitude: attack.location?.latitude || 0,
       longitude: attack.location?.longitude || 0,
+      isp: attack.location?.isp || "Unknown",
+      timezone: attack.location?.timezone || "Unknown",
       attackType: attack.attackType,
       severity: attack.severity,
       status: attack.status,
@@ -180,7 +212,10 @@ exports.getLoginHistory = async (req, res) => {
       userId: log.userId,
       ip: log.ip,
       country: log.location?.country || "Unknown",
+      state: log.location?.state || "Unknown",
       city: log.location?.city || "Unknown",
+      latitude: log.location?.latitude || 0,
+      longitude: log.location?.longitude || 0,
       attackType: log.attackType,
       severity: log.severity,
       status: log.status,
@@ -466,5 +501,145 @@ exports.getWebsiteUserByEmail = async (req, res) => {
   } catch (err) {
     console.error("Fetch website user failed:", err);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ================= CONFIRM SAFE (BEHAVIORAL) =================
+exports.confirmSafe = async (req, res) => {
+  try {
+    const { token } = req.params;
+    let decoded;
+    
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(400).send(`
+        <div style="text-align:center; padding: 50px; font-family: Arial;">
+          <h2>❌ Link Expired or Invalid</h2>
+          <p>This security link has expired or is no longer valid.</p>
+        </div>
+      `);
+    }
+
+    const { email, ip, websiteId, deviceFingerprint } = decoded;
+
+    // 1. Delete all failed/suspicious AttackLogs for this user/IP
+    await AttackLog.deleteMany({ email, ip, websiteId });
+
+    // 2. Remove blocked IP records
+    await BlockedIP.deleteMany({ ip, websiteId });
+
+    // 3. Reset WebsiteUser counters and update trusted info
+    await WebsiteUser.updateOne(
+      { email, websiteId },
+      { 
+        $set: { 
+          failedLogins: 0, 
+          attackCount: 0,
+          lastIp: ip,
+          lastLoginAt: new Date()
+        } 
+      }
+    );
+
+    // 4. Save current device as trusted if fingerprint exists
+    if (deviceFingerprint && deviceFingerprint !== "unknown") {
+      const existingTrusted = await TrustedDevice.findOne({ websiteId, deviceFingerprint });
+      if (!existingTrusted) {
+        await TrustedDevice.create({
+          websiteId,
+          deviceFingerprint,
+          ipAddress: ip,
+          userAgent: "Verified via Email Alert",
+          lastUsedAt: new Date()
+        });
+      }
+    }
+
+    // 5. Emit socket event for dashboard refresh
+    const website = await Website.findById(websiteId);
+    const io = req.app.get("io");
+    if (io && website?.ownerId) {
+      io.to(website.ownerId.toString()).emit("dashboard_refresh");
+    }
+
+    res.send(`
+      <div style="text-align:center; padding: 50px; font-family: Arial;">
+        <h2 style="color: #10b981;">✅ Security Alert Resolved</h2>
+        <p>Thank you for confirming. We have marked this activity as safe.</p>
+        <p>Your account is fully restored and you can now log in normally.</p>
+      </div>
+    `);
+
+  } catch (err) {
+    console.error("Confirm safe error:", err);
+    res.status(500).send("❌ Server error.");
+  }
+};
+
+// ================= REPORT THREAT (BEHAVIORAL) =================
+exports.reportThreat = async (req, res) => {
+  try {
+    const { token } = req.params;
+    let decoded;
+    
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (err) {
+      return res.status(400).send(`
+        <div style="text-align:center; padding: 50px; font-family: Arial;">
+          <h2>❌ Link Expired or Invalid</h2>
+          <p>This security link has expired or is no longer valid.</p>
+        </div>
+      `);
+    }
+
+    const { attackLogId, email, ip, websiteId } = decoded;
+    const blockedUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    // 1. Create blocked IP entry (avoid duplicates)
+    const website = await Website.findById(websiteId);
+    const ownerId = website?.ownerId;
+
+    await BlockedIP.findOneAndUpdate(
+      { ip, websiteId },
+      {
+        ip,
+        websiteId,
+        ownerId,
+        reason: "User confirmed malicious login",
+        blockedUntil
+      },
+      { upsert: true, new: true }
+    );
+
+    console.log("Blocked malicious IP:", ip);
+    console.log("Blocked until:", blockedUntil);
+
+    // 2. Escalate AttackLog severity to CRITICAL
+    if (attackLogId) {
+      await AttackLog.updateOne(
+        { _id: attackLogId },
+        { severity: "CRITICAL", actionTaken: "user-reported-threat" }
+      );
+    }
+
+    // 3. Emit socket refresh event after saving
+    const io = req.app.get("io");
+    if (io && ownerId) {
+      io.to(ownerId.toString()).emit("dashboard_refresh");
+    }
+
+    res.send(`
+      <div style="text-align:center; padding: 50px; font-family: Arial;">
+        <h2 style="color: #dc2626;">🚨 Threat Reported</h2>
+        <p>Thank you for reporting this. We have escalated the severity of this incident.</p>
+        <p>The originating IP address will remain restricted.</p>
+      </div>
+    `);
+
+  } catch (err) {
+    console.error("Report threat error:", err);
+    res.status(500).send("❌ Server error.");
   }
 };

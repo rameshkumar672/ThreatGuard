@@ -16,7 +16,12 @@ const attackLogSchema = new mongoose.Schema(
     },
     location: {
       country: { type: String, default: "Unknown" },
+      state: { type: String, default: "Unknown" },
       city: { type: String, default: "Unknown" },
+      latitude: { type: Number, default: 0 },
+      longitude: { type: Number, default: 0 },
+      isp: { type: String, default: "Unknown" },
+      timezone: { type: String, default: "Unknown" },
     },
     attackType: {
       type: String,

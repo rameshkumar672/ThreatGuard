@@ -1,10 +1,10 @@
 import { io } from 'socket.io-client';
 
-const SOCKET_URL = 'http://localhost:5000'; // Matches API baseURL endpoint structure
+const SOCKET_URL = 'http://localhost:5000';
 
 export const socket = io(SOCKET_URL, {
   autoConnect: true,
-  transports: ['websocket']
+  transports: ['websocket', 'polling']
 });
 
 socket.on('connect', () => {

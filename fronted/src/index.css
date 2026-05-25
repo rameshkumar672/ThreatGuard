@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@300;400;500;600;700&display=swap');
 
+@import 'leaflet/dist/leaflet.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -80,3 +81,119 @@
     box-shadow: 0 0 2px rgba(0, 240, 255, 0.1);
   }
 }
+/* Hacker Radar Animations */
+@keyframes radar-pulse {
+  0% { transform: scale(0.1); opacity: 0.8; }
+  100% { transform: scale(3); opacity: 0; }
+}
+
+@keyframes marker-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.8; }
+}
+
+.hacker-marker-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.radar-ring {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  animation: radar-pulse 2s infinite ease-out;
+  pointer-events: none;
+}
+
+.radar-ring-2 { animation-delay: 0.6s; }
+.radar-ring-3 { animation-delay: 1.2s; }
+
+.marker-core {
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  border-radius: 50%;
+  box-shadow: 0 0 15px currentColor;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: marker-pulse 1.5s infinite ease-in-out;
+}
+
+.marker-core svg {
+  width: 8px;
+  height: 8px;
+  color: #000;
+}
+
+/* Custom Hacker Popup Styles */
+.cyber-hacker-popup .leaflet-popup-content-wrapper {
+  background: rgba(6, 11, 20, 0.95) !important;
+  color: #e5e7eb !important;
+  border: 1px solid currentColor !important;
+  border-radius: 2px !important;
+  padding: 0 !important;
+  box-shadow: 0 0 25px rgba(0, 0, 0, 0.8), inset 0 0 10px rgba(255, 255, 255, 0.05) !important;
+  font-family: 'Fira Code', monospace !important;
+  backdrop-filter: blur(4px);
+  min-width: 180px;
+}
+
+.cyber-hacker-popup .leaflet-popup-content {
+  margin: 0 !important;
+  width: auto !important;
+}
+
+.cyber-hacker-popup .leaflet-popup-tip {
+  background: rgba(6, 11, 20, 0.95) !important;
+  border: 1px solid currentColor !important;
+}
+
+.hacker-alert-header {
+  background: currentColor;
+  color: #000;
+  padding: 4px 10px;
+  font-weight: 900;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+.hacker-alert-body {
+  padding: 10px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.hacker-label {
+  color: #9ca3af;
+  margin-right: 5px;
+}
+
+.hacker-value {
+  color: #fff;
+  font-weight: 500;
+}
+
+.text-critical { color: #ff003c; }
+.text-high { color: #f97316; }
+.text-medium { color: #eab308; }
+.text-low { color: #00f0ff; }
+
+.border-critical { border-color: #ff003c !important; }
+.border-high { border-color: #f97316 !important; }
+.border-medium { border-color: #eab308 !important; }
+.border-low { border-color: #00f0ff !important; }
+
+.bg-critical { background-color: #ff003c !important; }
+.bg-high { background-color: #f97316 !important; }
+.bg-medium { background-color: #eab308 !important; }
+.bg-low { background-color: #00f0ff !important; }

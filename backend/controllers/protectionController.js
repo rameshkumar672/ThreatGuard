@@ -3,6 +3,122 @@ const AttackLog = require("../models/smartlogin/AttackLog");
 const BlockedIP = require("../models/smartlogin/BlockedIP");
 const WebsiteUser = require("../models/smartlogin/WebsiteUser");
 const sendSecurityAlert = require("../utils/sendSecurityEmail");
+const jwt = require("jsonwebtoken");
+
+// --- In-Memory OTP Tracking ---
+// (In production, use Redis. We use a Map to meet "separate module/no new DB models" rule)
+const otpTracker = new Map();
+
+exports.otpRequest = async (req, res) => {
+  try {
+    const { email, ip } = req.body;
+    
+    if (!email || !ip) {
+      return res.status(400).json({ message: "email and ip are required." });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const website = req.website;
+
+    if (!website.verified) {
+      return res.status(403).json({ message: "Website is not verified." });
+    }
+
+    const now = Date.now();
+    const trackKey = `${website._id}:${normalizedEmail}:${ip}`;
+    
+    if (!otpTracker.has(trackKey)) {
+      otpTracker.set(trackKey, { requests: [] });
+    }
+    
+    const tracker = otpTracker.get(trackKey);
+    // Cleanup older than 10 mins
+    tracker.requests = tracker.requests.filter(timestamp => now - timestamp < 10 * 60 * 1000);
+    tracker.requests.push(now);
+
+    const count10m = tracker.requests.length;
+    const count5m = tracker.requests.filter(t => now - t < 5 * 60 * 1000).length;
+
+    let severity = "NONE";
+    
+    if (count10m >= 10) {
+      severity = "CRITICAL";
+    } else if (count5m >= 5) {
+      severity = "HIGH";
+    }
+
+    if (severity !== "NONE") {
+      const payload = {
+        otpRequestCount: severity === "CRITICAL" ? count10m : count5m,
+        email: normalizedEmail,
+        ip,
+        timeWindow: severity === "CRITICAL" ? "10 minutes" : "5 minutes"
+      };
+
+      const log = await AttackLog.create({
+        ip,
+        attackType: "OTP Abuse",
+        severity,
+        ownerId: website.ownerId,
+        websiteId: website._id,
+        location: req.location || { country: "Unknown", state: "Unknown", city: "Unknown", latitude: 0, longitude: 0, isp: "Unknown", timezone: "Unknown" },
+        email: normalizedEmail,
+        status: "failed",
+        reason: "Excessive OTP requests detected",
+        actionTaken: severity === "CRITICAL" ? "otp-locked" : "alert-triggered",
+        userAgent: req.headers["user-agent"] || "unknown",
+        payload,
+        timestamp: new Date()
+      });
+
+      const io = req.app.get("io");
+      if (io) {
+        io.to(website.ownerId.toString()).emit("new_attack", {
+          ip,
+          attackType: "OTP Abuse",
+          severity,
+          location: req.location || { country: "Unknown", state: "Unknown", city: "Unknown", latitude: 0, longitude: 0, isp: "Unknown", timezone: "Unknown" },
+          website: website.websiteUrl,
+          email: normalizedEmail,
+          time: new Date(),
+          payload
+        });
+      }
+
+      try {
+        await sendSecurityAlert(
+          normalizedEmail, // Send to affected user email
+          ip,
+          req.location || { country: "Unknown", city: "Unknown" },
+          1,
+          website.ownerId,
+          website._id,
+          req.headers["user-agent"] || "Unknown Device",
+          false,
+          "", // blockToken
+          "", // resetToken
+          "OTP Abuse",
+          log._id // Pass attackLogId
+        );
+      } catch (err) {
+        console.error("Failed to send behavioral alert email for OTP Abuse:", err);
+      }
+
+      if (severity === "CRITICAL") {
+        return res.status(429).json({ 
+          message: "Too many OTP requests. Temporary lock applied.", 
+          actionTaken: "otp-locked" 
+        });
+      }
+    }
+
+    res.json({ message: "OTP request tracked successfully", actionTaken: "monitoring" });
+
+  } catch (err) {
+    console.error("OTP Request Tracking Error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
 
 exports.loginAttempt = async (req, res) => {
   try {
@@ -155,7 +271,7 @@ exports.loginAttempt = async (req, res) => {
       severity: severityLevel,
       ownerId: website.ownerId,
       websiteId: website._id,
-      location: req.location || {},
+      location: req.location || { country: "Unknown", state: "Unknown", city: "Unknown", latitude: 0, longitude: 0, isp: "Unknown", timezone: "Unknown" },
       email: normalizedEmail || "unknown",
       status,
       reason,
@@ -205,7 +321,12 @@ exports.loginAttempt = async (req, res) => {
         1,
         website.ownerId,
         website._id,
-        req.headers["user-agent"] || "Unknown Device"
+        req.headers["user-agent"] || "Unknown Device",
+        false,
+        "",
+        "",
+        attackType,
+        attackLogDoc._id
       );
     }
 
@@ -215,7 +336,8 @@ exports.loginAttempt = async (req, res) => {
         $inc: { totalLogins: 1 },
         $set: {
           lastLogin: new Date(),
-          name: name || normalizedEmail.split("@")[0]
+          name: name || normalizedEmail.split("@")[0],
+          ...(req.behaviorUpdates || {})
         },
         $setOnInsert: {
           ownerId: website.ownerId
@@ -271,7 +393,7 @@ exports.loginAttempt = async (req, res) => {
         ip,
         attackType,
         severity: severityLevel,
-        country: req.location?.country || "Unknown",
+        location: req.location || { country: "Unknown", state: "Unknown", city: "Unknown", latitude: 0, longitude: 0, isp: "Unknown", timezone: "Unknown" },
         website: website.websiteUrl,
         email: normalizedEmail,
         time: new Date()

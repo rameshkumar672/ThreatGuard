@@ -6,6 +6,7 @@ import toast from 'react-hot-toast';
 import { ShieldAlert, Activity, Users, Shield, Globe2, AlertTriangle, Monitor, CheckCircle, XCircle, TrendingUp, Lock } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Line } from 'react-chartjs-2';
+import AttackerMap from '../components/AttackerMap';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -50,32 +51,38 @@ const Dashboard = () => {
   const [stats, setStats] = useState(null);
   const [loginHistory, setLoginHistory] = useState([]);
   const [timeline, setTimeline] = useState([]);
+  const [mapAttacks, setMapAttacks] = useState([]);
+
+  const fetchAll = async () => {
+    try {
+      const [scoreRes, historyRes, timelineRes, mapRes] = await Promise.allSettled([
+        api.get('/security/security-score'),
+        api.get('/security/login-history'),
+        api.get('/security/attack-timeline'),
+        api.get('/security/attack-map'),
+      ]);
+
+      if (scoreRes.status === 'fulfilled') {
+        setStats(scoreRes.value.data);
+      }
+      if (historyRes.status === 'fulfilled') {
+        const raw = historyRes.value.data;
+        setLoginHistory(Array.isArray(raw) ? raw.slice(0, 10) : []);
+      }
+      if (timelineRes.status === 'fulfilled') {
+        setTimeline(timelineRes.value.data || []);
+      }
+      if (mapRes.status === 'fulfilled') {
+        setMapAttacks(mapRes.value.data || []);
+      }
+    } catch (err) {
+      console.error('Dashboard fetch error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchAll = async () => {
-      try {
-        const [scoreRes, historyRes, timelineRes] = await Promise.allSettled([
-          api.get('/security/security-score'),
-          api.get('/security/login-history'),
-          api.get('/security/attack-timeline'),
-        ]);
-
-        if (scoreRes.status === 'fulfilled') {
-          setStats(scoreRes.value.data);
-        }
-        if (historyRes.status === 'fulfilled') {
-          const raw = historyRes.value.data;
-          setLoginHistory(Array.isArray(raw) ? raw.slice(0, 10) : []);
-        }
-        if (timelineRes.status === 'fulfilled') {
-          setTimeline(timelineRes.value.data || []);
-        }
-      } catch (err) {
-        console.error('Dashboard fetch error:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchAll();
   }, []);
 
@@ -99,12 +106,31 @@ const Dashboard = () => {
             attackType: data.attackType,
             severity: data.severity,
             status: 'failed',
-            country: data.country,
+            country: data.location?.country || '—',
             createdAt: data.time
           },
           ...prev
         ].slice(0, 30);
       });
+
+      // Update Map Live
+      if (data.location?.latitude && data.location?.longitude) {
+        setMapAttacks(prev => [
+          {
+            _id: Date.now().toString(), // Temporary ID for React key
+            ip: data.ip,
+            latitude: data.location.latitude,
+            longitude: data.location.longitude,
+            attackType: data.attackType,
+            severity: data.severity,
+            city: data.location.city,
+            state: data.location.state,
+            country: data.location.country,
+            createdAt: data.time
+          },
+          ...prev
+        ].slice(0, 100));
+      }
 
       setStats((prev) => prev ? {
         ...prev,
@@ -113,8 +139,14 @@ const Dashboard = () => {
       } : prev);
     });
 
+    socket.on('dashboard_refresh', () => {
+      console.log('🔄 Syncing dashboard data...');
+      fetchAll();
+    });
+
     return () => {
       socket.off('new_attack');
+      socket.off('dashboard_refresh');
     };
   }, []);
 
@@ -215,6 +247,9 @@ const Dashboard = () => {
           sub="Verified on protected sites"
         />
       </div>
+
+      {/* Attacker Map Intelligence */}
+      <AttackerMap attacks={mapAttacks} />
 
       {/* Chart + Live Threat Feed */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" style={{ minHeight: 360 }}>

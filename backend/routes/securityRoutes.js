@@ -14,7 +14,9 @@ const {
   getAIExplanation,
   getGlobalStats,
   getWebsiteUsers,
-  getWebsiteUserByEmail
+  getWebsiteUserByEmail,
+  confirmSafe,
+  reportThreat
 } = require("../controllers/securityController");
 
 const router = express.Router();
@@ -22,6 +24,8 @@ const router = express.Router();
 // Email action links (no auth — from email links)
 router.get("/it-was-me", itWasMe);
 router.get("/block-ip", blockIP);
+router.get("/confirm-safe/:token", confirmSafe);
+router.get("/report-threat/:token", reportThreat);
 
 // Dashboard APIs — JWT protected
 router.get("/attack-map", jwtAuth, getAttackMap);

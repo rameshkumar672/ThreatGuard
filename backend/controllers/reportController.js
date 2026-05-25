@@ -58,7 +58,7 @@ exports.exportCSVReport = async (req, res) => {
       .limit(100)
       .sort({ createdAt: -1 });
 
-    const fields = ["ip", "attackType", "severity", "status", "createdAt"];
+    const fields = ["ip", "location.country", "location.state", "location.city", "location.isp", "location.timezone", "attackType", "severity", "status", "createdAt"];
 
     const parser = new Parser({ fields });
 
